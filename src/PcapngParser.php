@@ -35,7 +35,7 @@ class PcapngParser {
      */
     public function parse($raw) {
         $currentPosition = 0;
-        $blockType = bin2hex(substr($raw, $currentPosition, 4));
+        $blockType = $this->bin2hexEndian(substr($raw, $currentPosition, 4));
 
         switch ($blockType) {
             case self::SHB_TYPE:
@@ -46,20 +46,13 @@ class PcapngParser {
                 //todo
                 break;
             case self::IDB_TYPE:
-
+                $this->parseInterfaceDescriptionBlock($raw, $currentPosition);
                 break;
             default:
                 trigger_error('Unknown type of block', E_USER_NOTICE);
         }
 
-
-//        $hex = $this->bin2hexEndian(substr($raw, $currentPosition, 45));
-//        $array = explode(',', chunk_split($hex, 2, ','));
-//        krsort($array);
-//        foreach ($array as $index => $item) {
-//            echo $item . ' ' . chr(hexdec($item)) . PHP_EOL;
-//        }
-
+//        $this->parseInterfaceDescriptionBlock($raw, $currentPosition);
 //        $packet = new Packet();
         echo PHP_EOL . 'done';
 
@@ -91,16 +84,24 @@ class PcapngParser {
         return $this->parse($raw);
     }
 
+    /**
+     * Parse Section Header Block.
+     * @param string $raw Binary string
+     * @param int $currentPosition
+     * @throws Exception
+     */
     private function parseSectionHeaderBlock($raw, &$currentPosition) {
+        echo '---------- SHB ------------' . PHP_EOL;
+
         // Section Header Block - Block Type
-        $fileStart = bin2hex(substr($raw, $currentPosition, 4));
-        if ($fileStart !== self::SHB_TYPE) {
-            throw new Exception('Unknown format');
+        $blockStart = $this->bin2hexEndian(substr($raw, $currentPosition, 4));
+        if ($blockStart !== self::SHB_TYPE) {
+            throw new Exception('Unknown format of Section Header Block');
         }
 
         // Section Header Block - Block Total Length
         $shbLength = $this->rawToDecimal(substr($raw, $currentPosition + 4, 4));
-        echo 'SHB lenght:' . $shbLength . PHP_EOL;
+        echo 'SHB length:' . $shbLength . PHP_EOL;
 
         // Section Header Block - Byte-Order Magic
         $byteOrderMagic = substr($raw, $currentPosition + 8, 4);
@@ -136,6 +137,45 @@ class PcapngParser {
         $currentPosition += 4; //closing Block Total Length
     }
 
+    /**
+     * Parse Interface Description Block.
+     * @param string $raw Binary string
+     * @param int $currentPosition
+     * @throws Exception
+     */
+    private function parseInterfaceDescriptionBlock($raw, &$currentPosition) {
+        echo '---------- IDB ------------' . PHP_EOL;
+
+        $blockStart = $this->bin2hexEndian(substr($raw, $currentPosition, 4));
+        if ($blockStart !== self::IDB_TYPE) {
+            throw new Exception('Unknown format of Interface Description Block');
+        }
+
+        // Section Header Block - Block Total Length
+        $totalLength = $this->rawToDecimal(substr($raw, $currentPosition + 4, 4));
+        echo 'IDB length:' . $totalLength . PHP_EOL;
+
+        $linkType = $this->rawToDecimal(substr($raw, $currentPosition + 8, 2));
+        echo 'IDB link type:' . $linkType . PHP_EOL;
+
+        $reserved = $this->bin2hexEndian(substr($raw, $currentPosition + 10, 2));
+        if ($reserved !== '0000') {
+            trigger_error('Reserved field in Interface Description Block must by 0', E_USER_NOTICE);
+        }
+
+        $snapLen = $this->rawToDecimal(substr($raw, $currentPosition + 12, 4));
+        echo 'IDB snap length:' . $snapLen . PHP_EOL;
+
+        $currentPosition += 16;
+        $this->parseOptions($raw, $currentPosition);
+
+        $shbLengthEnd = $this->rawToDecimal(substr($raw, $currentPosition, 4));
+        if ($shbLengthEnd !== $totalLength) {
+            throw new Exception('Unknown format');
+        }
+
+        $currentPosition += 4;
+    }
 
     /**
      * Parse Options.
@@ -188,6 +228,21 @@ class PcapngParser {
         $raw = $this->bin2hexEndian($raw);
 
         return hexdec($raw);
+    }
+
+    /**
+     * @param string $raw
+     * @param int $currentPosition
+     * @param int $length
+     * @internal Only for development
+     */
+    private function showNextBytes($raw, $currentPosition, $length) {
+        $hex = $this->bin2hexEndian(substr($raw, $currentPosition, $length));
+        $array = explode(',', chunk_split($hex, 2, ','));
+        krsort($array);
+        foreach ($array as $index => $item) {
+            echo $item . ' ' . chr(hexdec($item)) . PHP_EOL;
+        }
     }
 
 }
