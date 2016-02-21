@@ -12,7 +12,7 @@ use InvalidArgumentException;
  */
 class PcapngParser {
     //Pcapng library internals
-    const VERSION = 0.10;
+    const VERSION = 0.11;
 
     // Section Header Block
     const SHB_TYPE = '0a0d0d0a';
@@ -20,6 +20,9 @@ class PcapngParser {
 
     // Interface Description Block
     const IDB_TYPE = '00000001';
+
+    // Interface Statistics Block
+    const ISB_TYPE = '00000005';
 
     // Enhanced Packet Block
     const EPB_TYPE = '00000006';
@@ -474,6 +477,9 @@ class PcapngParser {
                 case self::EPB_TYPE:
                     $this->parseEnhancedPacketBlock($raw, $currentPosition);
                     break;
+                case self::ISB_TYPE:
+                    $this->parseInterfaceStatisticsBlock($raw, $currentPosition);
+                    break;
                 default:
                     $this->showNextBytes($raw, $currentPosition, 30);
                     throw new Exception('Unknown type');
@@ -579,7 +585,7 @@ class PcapngParser {
             throw new Exception('Unknown format of Interface Description Block');
         }
 
-        // Section Header Block - Block Total Length
+        // Block Total Length
         $totalLength = $this->rawToDecimal(substr($raw, $currentPosition + 4, 4));
         echo 'IDB length:' . $totalLength . PHP_EOL;
 
@@ -652,6 +658,50 @@ class PcapngParser {
         if ($totalLength - (28 + $paddedLength + 4) >= 8) { //there is some space for Options //8 = minimal Options size
             $this->parseOptions($raw, $currentPosition);
         }
+
+        $lengthEnd = $this->rawToDecimal(substr($raw, $currentPosition, 4));
+        if ($lengthEnd !== $totalLength) {
+            throw new Exception('Unknown format');
+        }
+
+        $currentPosition += 4;
+    }
+
+    /**
+     * Parse Interface Statistics Block.
+     *
+     * The Interface Statistics Block (ISB) contains the capture statistics for a given interface and it is optional.
+     * The statistics are referred to the interface defined in the current Section identified by the Interface ID field.
+     * An Interface Statistics Block is normally placed at the end of the file, but no assumptions can be taken
+     * about its position - it can even appear multiple times for the same interface.
+     *
+     * @param string $raw Binary string
+     * @param int $currentPosition
+     * @throws Exception
+     */
+    private function parseInterfaceStatisticsBlock($raw, &$currentPosition) {
+        echo '---------- ISB ------------' . PHP_EOL;
+
+        $blockStart = $this->bin2hexEndian(substr($raw, $currentPosition, 4));
+        if ($blockStart !== self::ISB_TYPE) {
+            throw new Exception('Unknown format of Interface Statistics Block');
+        }
+
+        // Block Total Length
+        $totalLength = $this->rawToDecimal(substr($raw, $currentPosition + 4, 4));
+        echo 'Length:' . $totalLength . PHP_EOL;
+
+        $interfaceId = $this->rawToDecimal(substr($raw, $currentPosition + 8, 4));
+        echo 'Interface ID:' . $interfaceId . PHP_EOL;
+
+        $timestampHigh = $this->rawToFloat(substr($raw, $currentPosition + 12, 4)); //todo wrong representation
+        echo 'Timestamp(high):' . $timestampHigh . PHP_EOL;
+
+        $timestampLow = $this->rawToFloat(substr($raw, $currentPosition + 16, 4)); //todo wrong representation
+        echo 'Timestamp(low):' . $timestampLow . PHP_EOL;
+
+        $currentPosition += 20;
+        $this->parseOptions($raw, $currentPosition);
 
         $lengthEnd = $this->rawToDecimal(substr($raw, $currentPosition, 4));
         if ($lengthEnd !== $totalLength) {
