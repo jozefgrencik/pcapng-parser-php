@@ -21,6 +21,9 @@ class PcapngParser {
     // Interface Description Block
     const IDB_TYPE = '00000001';
 
+    // Enhanced Packet Block
+    const EPB_TYPE = '00000006';
+
     // Custom Block
     const CB_TYPE1 = '00000bad';
     const CB_TYPE2 = '40000bad';
@@ -454,24 +457,30 @@ class PcapngParser {
      */
     public function parse($raw) {
         $currentPosition = 0;
-        $blockType = $this->bin2hexEndian(substr($raw, $currentPosition, 4));
 
-        switch ($blockType) {
-            case self::SHB_TYPE:
-                $this->parseSectionHeaderBlock($raw, $currentPosition);
-                break;
-            case self::CB_TYPE1:
-            case self::CB_TYPE2:
-                //todo
-                break;
-            case self::IDB_TYPE:
-                $this->parseInterfaceDescriptionBlock($raw, $currentPosition);
-                break;
-            default:
-                trigger_error('Unknown type of block', E_USER_NOTICE);
+        while ($currentPosition < strlen($raw)) {
+            $blockType = $this->bin2hexEndian(substr($raw, $currentPosition, 4));
+            switch ($blockType) {
+                case self::SHB_TYPE:
+                    $this->parseSectionHeaderBlock($raw, $currentPosition);
+                    break;
+                case self::CB_TYPE1:
+                case self::CB_TYPE2:
+                    //todo
+                    break;
+                case self::IDB_TYPE:
+                    $this->parseInterfaceDescriptionBlock($raw, $currentPosition);
+                    break;
+                case self::EPB_TYPE:
+                    $this->parseEnhancedPacketBlock($raw, $currentPosition);
+                    break;
+                default:
+                    $this->showNextBytes($raw, $currentPosition, 30);
+                    throw new Exception('Unknown type');
+                    trigger_error('Unknown type of block', E_USER_NOTICE);
+            }
         }
 
-//        $this->parseInterfaceDescriptionBlock($raw, $currentPosition);
 //        $packet = new Packet();
         echo PHP_EOL . 'done';
 
@@ -588,8 +597,64 @@ class PcapngParser {
         $currentPosition += 16;
         $this->parseOptions($raw, $currentPosition);
 
-        $shbLengthEnd = $this->rawToDecimal(substr($raw, $currentPosition, 4));
-        if ($shbLengthEnd !== $totalLength) {
+        $lengthEnd = $this->rawToDecimal(substr($raw, $currentPosition, 4));
+        if ($lengthEnd !== $totalLength) {
+            throw new Exception('Unknown format');
+        }
+
+        $currentPosition += 4;
+    }
+
+    /**
+     * Parse Enhanced Packet Block.
+     *
+     * An Enhanced Packet Block (EPB) is the standard container for storing the packets coming from the network.
+     * The Enhanced Packet Block is optional because packets can be stored either by means of this block or
+     * the Simple Packet Block, which can be used to speed up capture file generation.
+     *
+     * @param string $raw Binary string
+     * @param int $currentPosition
+     * @throws Exception
+     */
+    private function parseEnhancedPacketBlock($raw, &$currentPosition) {
+        echo '---------- EPB ------------' . PHP_EOL;
+
+        $blockStart = $this->bin2hexEndian(substr($raw, $currentPosition, 4));
+        if ($blockStart !== self::EPB_TYPE) {
+            throw new Exception('Unknown format of Enhanced Packet Block');
+        }
+
+        // Section Header Block - Block Total Length
+        $totalLength = $this->rawToDecimal(substr($raw, $currentPosition + 4, 4));
+        echo 'Length:' . $totalLength . PHP_EOL;
+
+        $interfaceId = $this->rawToDecimal(substr($raw, $currentPosition + 8, 4));
+        echo 'Interface ID:' . $interfaceId . PHP_EOL;
+
+        $timestampHigh = $this->rawToFloat(substr($raw, $currentPosition + 12, 4)); //todo wrong representation
+        echo 'Timestamp(high):' . $timestampHigh . PHP_EOL;
+
+        $timestampLow = $this->rawToFloat(substr($raw, $currentPosition + 16, 4)); //todo wrong representation
+        echo 'Timestamp(low):' . $timestampLow . PHP_EOL;
+
+        $capturedLength = $this->rawToDecimal(substr($raw, $currentPosition + 20, 4));
+        echo 'Captured Packet Length:' . $capturedLength . PHP_EOL;
+
+        $originalLength = $this->rawToDecimal(substr($raw, $currentPosition + 24, 4));
+        echo 'Original Packet Length:' . $originalLength . PHP_EOL;
+
+        $packetData = substr($raw, $currentPosition, $capturedLength);
+        echo 'Packet data:' . $packetData . PHP_EOL;
+
+        $paddedLength = ceil($capturedLength / 4) * 4;
+        $currentPosition = $currentPosition + 28 + $paddedLength;
+
+        if ($totalLength - (28 + $paddedLength + 4) >= 8) { //there is some space for Options //8 = minimal Options size
+            $this->parseOptions($raw, $currentPosition);
+        }
+
+        $lengthEnd = $this->rawToDecimal(substr($raw, $currentPosition, 4));
+        if ($lengthEnd !== $totalLength) {
             throw new Exception('Unknown format');
         }
 
@@ -650,6 +715,18 @@ class PcapngParser {
     }
 
     /**
+     * Convert binary string to float.
+     * @param string $raw
+     * @return float
+     */
+    public function rawToFloat($raw) {
+        $data = unpack('f', strrev($raw));
+
+        return $data[1];
+    }
+
+    /**
+     * Display following bytes. Only for development.
      * @param string $raw
      * @param int $currentPosition
      * @param int $length
