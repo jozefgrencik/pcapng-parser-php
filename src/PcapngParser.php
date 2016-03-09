@@ -12,7 +12,7 @@ use InvalidArgumentException;
  */
 class PcapngParser {
     //Pcapng library internals
-    const VERSION = 0.11;
+    const VERSION = 0.12;
 
     // Section Header Block
     const SHB_TYPE = '0a0d0d0a';
@@ -450,7 +450,18 @@ class PcapngParser {
             'description' => 'Messages between ISO 14443 contactless smartcards (Proximity Integrated Circuit Card, PICC) and card readers (Proximity Coupling Device, PCD), with the message format specified by the PCAP format for ISO14443 specification.'),
     );
 
+    static private $optionsTypes = array(
+        //todo
+    );
+
     private $endian = 0;
+
+    /** @var Packet[] array of Packet objects */
+    public $packets = array();
+
+    private $IDBs = array();
+    private $ISBs = array();
+    private $SHBs = array();
 
     /**
      * Parse file content.
@@ -483,7 +494,7 @@ class PcapngParser {
                 default:
                     $this->showNextBytes($raw, $currentPosition, 30);
                     throw new Exception('Unknown type');
-                    trigger_error('Unknown type of block', E_USER_NOTICE);
+                    //trigger_error('Unknown type of block', E_USER_NOTICE);
             }
         }
 
@@ -522,10 +533,13 @@ class PcapngParser {
      * Parse Section Header Block.
      * @param string $raw Binary string
      * @param int $currentPosition
+     * @return array
      * @throws Exception
      */
     private function parseSectionHeaderBlock($raw, &$currentPosition) {
-        echo '---------- SHB ------------' . PHP_EOL;
+        $block = array(
+            'type' => 'SHB'
+        );
 
         // Section Header Block - Block Type
         $blockStart = $this->bin2hexEndian(substr($raw, $currentPosition, 4));
@@ -535,7 +549,7 @@ class PcapngParser {
 
         // Section Header Block - Block Total Length
         $shbLength = $this->rawToDecimal(substr($raw, $currentPosition + 4, 4));
-        echo 'SHB length:' . $shbLength . PHP_EOL;
+        $block['length'] = $shbLength;
 
         // Section Header Block - Byte-Order Magic
         $byteOrderMagic = substr($raw, $currentPosition + 8, 4);
@@ -549,36 +563,42 @@ class PcapngParser {
 
         // Section Header Block - Major Version
         $majorVersion = $this->rawToDecimal(substr($raw, $currentPosition + 12, 2));
-        echo 'Major:' . $majorVersion . PHP_EOL;
+        $block['major_version'] = $majorVersion;
 
         // Section Header Block - Minor Version
         $minorVersion = $this->rawToDecimal(substr($raw, $currentPosition + 14, 2));
-        echo 'Minor:' . $minorVersion . PHP_EOL;
+        $block['minor_version'] = $minorVersion;
 
         // Section Header Block - Section Length
         //https://en.wikipedia.org/wiki/Signed_number_representations
         $sectionLength = substr($raw, $currentPosition + 16, 8);
-        echo 'Raw section length:' . bin2hex($sectionLength) . PHP_EOL;
+        $block['section_length'] = bin2hex($sectionLength); //todo make numeric
 
         // Section Header Block - Options
         $currentPosition += 16 + 8;
-        $this->parseOptions($raw, $currentPosition);
+        $block['options'] = $this->parseOptions($raw, $currentPosition);
 
         $shbLengthEnd = $this->rawToDecimal(substr($raw, $currentPosition, 4));
         if ($shbLengthEnd !== $shbLength) {
             throw new Exception('Unknown format');
         }
         $currentPosition += 4; //closing Block Total Length
+
+        print_r($block);
+        return $block;
     }
 
     /**
      * Parse Interface Description Block.
      * @param string $raw Binary string
      * @param int $currentPosition
+     * @return array
      * @throws Exception
      */
     private function parseInterfaceDescriptionBlock($raw, &$currentPosition) {
-        echo '---------- IDB ------------' . PHP_EOL;
+        $block = array(
+            'type' => 'IDB'
+        );
 
         $blockStart = $this->bin2hexEndian(substr($raw, $currentPosition, 4));
         if ($blockStart !== self::IDB_TYPE) {
@@ -587,10 +607,11 @@ class PcapngParser {
 
         // Block Total Length
         $totalLength = $this->rawToDecimal(substr($raw, $currentPosition + 4, 4));
-        echo 'IDB length:' . $totalLength . PHP_EOL;
+        $block['length'] = $totalLength;
 
+        //LinkType
         $linkType = $this->rawToDecimal(substr($raw, $currentPosition + 8, 2));
-        echo 'IDB link type:' . $linkType . PHP_EOL;
+        $block['link_type'] = $linkType;
 
         $reserved = $this->bin2hexEndian(substr($raw, $currentPosition + 10, 2));
         if ($reserved !== '0000') {
@@ -598,10 +619,10 @@ class PcapngParser {
         }
 
         $snapLen = $this->rawToDecimal(substr($raw, $currentPosition + 12, 4));
-        echo 'IDB snap length:' . $snapLen . PHP_EOL;
+        $block['snap_length'] = $snapLen;
 
         $currentPosition += 16;
-        $this->parseOptions($raw, $currentPosition);
+        $block['options'] = $this->parseOptions($raw, $currentPosition);
 
         $lengthEnd = $this->rawToDecimal(substr($raw, $currentPosition, 4));
         if ($lengthEnd !== $totalLength) {
@@ -609,6 +630,8 @@ class PcapngParser {
         }
 
         $currentPosition += 4;
+        print_r($block);
+        return $block;
     }
 
     /**
@@ -620,10 +643,13 @@ class PcapngParser {
      *
      * @param string $raw Binary string
      * @param int $currentPosition
+     * @return array
      * @throws Exception
      */
     private function parseEnhancedPacketBlock($raw, &$currentPosition) {
-        echo '---------- EPB ------------' . PHP_EOL;
+        $block = array(
+            'type' => 'EPB'
+        );
 
         $blockStart = $this->bin2hexEndian(substr($raw, $currentPosition, 4));
         if ($blockStart !== self::EPB_TYPE) {
@@ -632,31 +658,31 @@ class PcapngParser {
 
         // Section Header Block - Block Total Length
         $totalLength = $this->rawToDecimal(substr($raw, $currentPosition + 4, 4));
-        echo 'Length:' . $totalLength . PHP_EOL;
+        $block['length'] = $totalLength;
 
         $interfaceId = $this->rawToDecimal(substr($raw, $currentPosition + 8, 4));
-        echo 'Interface ID:' . $interfaceId . PHP_EOL;
+        $block['interface_id'] = $interfaceId;
 
         $timestampHigh = $this->rawToFloat(substr($raw, $currentPosition + 12, 4)); //todo wrong representation
-        echo 'Timestamp(high):' . $timestampHigh . PHP_EOL;
+        $block['timestamp_high'] = $timestampHigh;
 
         $timestampLow = $this->rawToFloat(substr($raw, $currentPosition + 16, 4)); //todo wrong representation
-        echo 'Timestamp(low):' . $timestampLow . PHP_EOL;
+        $block['timestamp_low'] = $timestampLow;
 
         $capturedLength = $this->rawToDecimal(substr($raw, $currentPosition + 20, 4));
-        echo 'Captured Packet Length:' . $capturedLength . PHP_EOL;
+        $block['captured_packet_length'] = $capturedLength;
 
         $originalLength = $this->rawToDecimal(substr($raw, $currentPosition + 24, 4));
-        echo 'Original Packet Length:' . $originalLength . PHP_EOL;
+        $block['original_packet_length'] = $originalLength;
 
-        $packetData = substr($raw, $currentPosition, $capturedLength);
-        echo 'Packet data:' . $packetData . PHP_EOL;
+//        $packetData = substr($raw, $currentPosition, $capturedLength);
+//        $block['data'] = $packetData; //todo uncomment
 
         $paddedLength = ceil($capturedLength / 4) * 4;
         $currentPosition = $currentPosition + 28 + $paddedLength;
 
         if ($totalLength - (28 + $paddedLength + 4) >= 8) { //there is some space for Options //8 = minimal Options size
-            $this->parseOptions($raw, $currentPosition);
+            $block['options'] = $this->parseOptions($raw, $currentPosition);
         }
 
         $lengthEnd = $this->rawToDecimal(substr($raw, $currentPosition, 4));
@@ -665,6 +691,8 @@ class PcapngParser {
         }
 
         $currentPosition += 4;
+        print_r($block);
+        return $block;
     }
 
     /**
@@ -677,10 +705,13 @@ class PcapngParser {
      *
      * @param string $raw Binary string
      * @param int $currentPosition
+     * @return array
      * @throws Exception
      */
     private function parseInterfaceStatisticsBlock($raw, &$currentPosition) {
-        echo '---------- ISB ------------' . PHP_EOL;
+        $block = array(
+            'type' => 'ISB'
+        );
 
         $blockStart = $this->bin2hexEndian(substr($raw, $currentPosition, 4));
         if ($blockStart !== self::ISB_TYPE) {
@@ -689,19 +720,19 @@ class PcapngParser {
 
         // Block Total Length
         $totalLength = $this->rawToDecimal(substr($raw, $currentPosition + 4, 4));
-        echo 'Length:' . $totalLength . PHP_EOL;
+        $block['length'] = $totalLength;
 
         $interfaceId = $this->rawToDecimal(substr($raw, $currentPosition + 8, 4));
-        echo 'Interface ID:' . $interfaceId . PHP_EOL;
+        $block['interface_id'] = $interfaceId;
 
         $timestampHigh = $this->rawToFloat(substr($raw, $currentPosition + 12, 4)); //todo wrong representation
-        echo 'Timestamp(high):' . $timestampHigh . PHP_EOL;
+        $block['timestamp_high'] = $timestampHigh;
 
         $timestampLow = $this->rawToFloat(substr($raw, $currentPosition + 16, 4)); //todo wrong representation
-        echo 'Timestamp(low):' . $timestampLow . PHP_EOL;
+        $block['timestamp_low'] = $timestampLow;
 
         $currentPosition += 20;
-        $this->parseOptions($raw, $currentPosition);
+        $block['options'] = $this->parseOptions($raw, $currentPosition);
 
         $lengthEnd = $this->rawToDecimal(substr($raw, $currentPosition, 4));
         if ($lengthEnd !== $totalLength) {
@@ -709,34 +740,35 @@ class PcapngParser {
         }
 
         $currentPosition += 4;
+        print_r($block);
+        return $block;
     }
 
     /**
      * Parse Options.
      * @param string $raw Binary string
      * @param int $currentPosition
+     * @return array
      */
     private function parseOptions($raw, &$currentPosition) {
-        $i = 0;
+        $options = array();
+
+        //Option Code
         while ($optionCode = substr($raw, $currentPosition, 2) !== chr(0) . chr(0)) {
-            ++$i;
-
-            //Option Code
-            echo 'Option code[' . $i . ']:' . $this->rawToDecimal($optionCode) . PHP_EOL;
-
             //Option Length
             $optionLength = $this->rawToDecimal(substr($raw, $currentPosition + 2, 2));
-            echo 'Option length[' . $i . ']:' . $optionLength . PHP_EOL;
 
             //Option Value
-            $optionValue = substr($raw, $currentPosition + 4, $optionLength);
-            echo 'Option value[' . $i . ']:' . ($optionValue) . PHP_EOL;
+            $options[] = array(
+                'code' => $this->rawToDecimal($optionCode),
+                'value' => substr($raw, $currentPosition + 4, $optionLength)
+            );
 
-            $optionLengthWithPadding = ceil($optionLength / 4) * 4;
-            $currentPosition += 4 + $optionLengthWithPadding;
+            $currentPosition += 4 + ceil($optionLength / 4) * 4; //4 = Option code + Option length
         }
 
-        $currentPosition += 4; //closing Option code + Option length
+        $currentPosition += 4; //closing Option code + closing Option length
+        return $options;
     }
 
     /**
