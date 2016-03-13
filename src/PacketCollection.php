@@ -1,6 +1,6 @@
 <?php
 
-namespace pcapng_parser;
+namespace Pcapng;
 
 use Iterator;
 

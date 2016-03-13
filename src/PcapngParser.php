@@ -1,6 +1,6 @@
 <?php
 
-namespace pcapng_parser;
+namespace Pcapng;
 
 use Exception;
 use InvalidArgumentException;
@@ -12,7 +12,7 @@ use InvalidArgumentException;
  */
 class PcapngParser {
     //Pcapng library internals
-    const VERSION = 0.12;
+    const VERSION = 0.13;
 
     // Section Header Block
     const SHB_TYPE = '0a0d0d0a';
@@ -451,7 +451,7 @@ class PcapngParser {
     );
 
     static private $optionsTypes = array(
-        //todo
+
     );
 
     private $endian = 0;

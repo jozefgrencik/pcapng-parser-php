@@ -1,6 +1,6 @@
 <?php
 
-namespace pcapng_parser;
+namespace Pcapng;
 
 class Packet {
     public $length = 0;
