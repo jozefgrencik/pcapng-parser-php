@@ -4,6 +4,11 @@ namespace Pcapng;
 
 use Exception;
 use InvalidArgumentException;
+use Pcapng\Blocks\CustomBlock;
+use Pcapng\Blocks\EnhancedPacketBlock;
+use Pcapng\Blocks\InterfaceDescriptionBlock;
+use Pcapng\Blocks\InterfaceStatisticsBlock;
+use Pcapng\Blocks\SectionHeaderBlock;
 
 /**
  * Class PcapngParser
@@ -12,24 +17,7 @@ use InvalidArgumentException;
  */
 class PcapngParser {
     //Pcapng library internals
-    const VERSION = 0.13;
-
-    // Section Header Block
-    const SHB_TYPE = '0a0d0d0a';
-    const SHB_BYTE_ORDER_MAGIC = '1a2b3c4d';
-
-    // Interface Description Block
-    const IDB_TYPE = '00000001';
-
-    // Interface Statistics Block
-    const ISB_TYPE = '00000005';
-
-    // Enhanced Packet Block
-    const EPB_TYPE = '00000006';
-
-    // Custom Block
-    const CB_TYPE1 = '00000bad';
-    const CB_TYPE2 = '40000bad';
+    const VERSION = 0.14;
 
     static private $linkLayerTypes = array(
         0 => array(
@@ -450,10 +438,6 @@ class PcapngParser {
             'description' => 'Messages between ISO 14443 contactless smartcards (Proximity Integrated Circuit Card, PICC) and card readers (Proximity Coupling Device, PCD), with the message format specified by the PCAP format for ISO14443 specification.'),
     );
 
-    static private $optionsTypes = array(
-
-    );
-
     private $endian = 0;
 
     /** @var Packet[] array of Packet objects */
@@ -475,27 +459,30 @@ class PcapngParser {
         while ($currentPosition < strlen($raw)) {
             $blockType = $this->bin2hexEndian(substr($raw, $currentPosition, 4));
             switch ($blockType) {
-                case self::SHB_TYPE:
-                    $this->parseSectionHeaderBlock($raw, $currentPosition);
+                case SectionHeaderBlock::BYTE_TYPE:
+                    $block = new SectionHeaderBlock();
                     break;
-                case self::CB_TYPE1:
-                case self::CB_TYPE2:
-                    //todo
+                case CustomBlock::BYTE_TYPE1:
+                case CustomBlock::BYTE_TYPE2:
+                    $block = new CustomBlock();
                     break;
-                case self::IDB_TYPE:
-                    $this->parseInterfaceDescriptionBlock($raw, $currentPosition);
+                case InterfaceDescriptionBlock::BYTE_TYPE:
+                    $block = new InterfaceDescriptionBlock();
                     break;
-                case self::EPB_TYPE:
-                    $this->parseEnhancedPacketBlock($raw, $currentPosition);
+                case EnhancedPacketBlock::BYTE_TYPE:
+                    $block = new EnhancedPacketBlock();
                     break;
-                case self::ISB_TYPE:
-                    $this->parseInterfaceStatisticsBlock($raw, $currentPosition);
+                case InterfaceStatisticsBlock::BYTE_TYPE:
+                    $block = new InterfaceStatisticsBlock();
                     break;
                 default:
-                    $this->showNextBytes($raw, $currentPosition, 30);
+//                    $this->showNextBytes($raw, $currentPosition, 30);
                     throw new Exception('Unknown type');
                     //trigger_error('Unknown type of block', E_USER_NOTICE);
             }
+
+            $block->parse($raw, $currentPosition);
+            var_export($block->getInfo());
         }
 
 //        $packet = new Packet();
@@ -530,253 +517,11 @@ class PcapngParser {
     }
 
     /**
-     * Parse Section Header Block.
-     * @param string $raw Binary string
-     * @param int $currentPosition
-     * @return array
-     * @throws Exception
-     */
-    private function parseSectionHeaderBlock($raw, &$currentPosition) {
-        $block = array(
-            'type' => 'SHB'
-        );
-
-        // Section Header Block - Block Type
-        $blockStart = $this->bin2hexEndian(substr($raw, $currentPosition, 4));
-        if ($blockStart !== self::SHB_TYPE) {
-            throw new Exception('Unknown format of Section Header Block');
-        }
-
-        // Section Header Block - Block Total Length
-        $shbLength = $this->rawToDecimal(substr($raw, $currentPosition + 4, 4));
-        $block['length'] = $shbLength;
-
-        // Section Header Block - Byte-Order Magic
-        $byteOrderMagic = substr($raw, $currentPosition + 8, 4);
-        if (bin2hex($byteOrderMagic) === self::SHB_BYTE_ORDER_MAGIC) {
-            $this->endian = 0;
-        } else if ($this->bin2hexEndian($byteOrderMagic) === self::SHB_BYTE_ORDER_MAGIC) {
-            $this->endian = 1;
-        } else {
-            throw new Exception('Unknown format');
-        }
-
-        // Section Header Block - Major Version
-        $majorVersion = $this->rawToDecimal(substr($raw, $currentPosition + 12, 2));
-        $block['major_version'] = $majorVersion;
-
-        // Section Header Block - Minor Version
-        $minorVersion = $this->rawToDecimal(substr($raw, $currentPosition + 14, 2));
-        $block['minor_version'] = $minorVersion;
-
-        // Section Header Block - Section Length
-        //https://en.wikipedia.org/wiki/Signed_number_representations
-        $sectionLength = substr($raw, $currentPosition + 16, 8);
-        $block['section_length'] = bin2hex($sectionLength); //todo make numeric
-
-        // Section Header Block - Options
-        $currentPosition += 16 + 8;
-        $block['options'] = $this->parseOptions($raw, $currentPosition);
-
-        $shbLengthEnd = $this->rawToDecimal(substr($raw, $currentPosition, 4));
-        if ($shbLengthEnd !== $shbLength) {
-            throw new Exception('Unknown format');
-        }
-        $currentPosition += 4; //closing Block Total Length
-
-        print_r($block);
-        return $block;
-    }
-
-    /**
-     * Parse Interface Description Block.
-     * @param string $raw Binary string
-     * @param int $currentPosition
-     * @return array
-     * @throws Exception
-     */
-    private function parseInterfaceDescriptionBlock($raw, &$currentPosition) {
-        $block = array(
-            'type' => 'IDB'
-        );
-
-        $blockStart = $this->bin2hexEndian(substr($raw, $currentPosition, 4));
-        if ($blockStart !== self::IDB_TYPE) {
-            throw new Exception('Unknown format of Interface Description Block');
-        }
-
-        // Block Total Length
-        $totalLength = $this->rawToDecimal(substr($raw, $currentPosition + 4, 4));
-        $block['length'] = $totalLength;
-
-        //LinkType
-        $linkType = $this->rawToDecimal(substr($raw, $currentPosition + 8, 2));
-        $block['link_type'] = $linkType;
-
-        $reserved = $this->bin2hexEndian(substr($raw, $currentPosition + 10, 2));
-        if ($reserved !== '0000') {
-            trigger_error('Reserved field in Interface Description Block must by 0', E_USER_NOTICE);
-        }
-
-        $snapLen = $this->rawToDecimal(substr($raw, $currentPosition + 12, 4));
-        $block['snap_length'] = $snapLen;
-
-        $currentPosition += 16;
-        $block['options'] = $this->parseOptions($raw, $currentPosition);
-
-        $lengthEnd = $this->rawToDecimal(substr($raw, $currentPosition, 4));
-        if ($lengthEnd !== $totalLength) {
-            throw new Exception('Unknown format');
-        }
-
-        $currentPosition += 4;
-        print_r($block);
-        return $block;
-    }
-
-    /**
-     * Parse Enhanced Packet Block.
-     *
-     * An Enhanced Packet Block (EPB) is the standard container for storing the packets coming from the network.
-     * The Enhanced Packet Block is optional because packets can be stored either by means of this block or
-     * the Simple Packet Block, which can be used to speed up capture file generation.
-     *
-     * @param string $raw Binary string
-     * @param int $currentPosition
-     * @return array
-     * @throws Exception
-     */
-    private function parseEnhancedPacketBlock($raw, &$currentPosition) {
-        $block = array(
-            'type' => 'EPB'
-        );
-
-        $blockStart = $this->bin2hexEndian(substr($raw, $currentPosition, 4));
-        if ($blockStart !== self::EPB_TYPE) {
-            throw new Exception('Unknown format of Enhanced Packet Block');
-        }
-
-        // Section Header Block - Block Total Length
-        $totalLength = $this->rawToDecimal(substr($raw, $currentPosition + 4, 4));
-        $block['length'] = $totalLength;
-
-        $interfaceId = $this->rawToDecimal(substr($raw, $currentPosition + 8, 4));
-        $block['interface_id'] = $interfaceId;
-
-        $timestampHigh = $this->rawToFloat(substr($raw, $currentPosition + 12, 4)); //todo wrong representation
-        $block['timestamp_high'] = $timestampHigh;
-
-        $timestampLow = $this->rawToFloat(substr($raw, $currentPosition + 16, 4)); //todo wrong representation
-        $block['timestamp_low'] = $timestampLow;
-
-        $capturedLength = $this->rawToDecimal(substr($raw, $currentPosition + 20, 4));
-        $block['captured_packet_length'] = $capturedLength;
-
-        $originalLength = $this->rawToDecimal(substr($raw, $currentPosition + 24, 4));
-        $block['original_packet_length'] = $originalLength;
-
-//        $packetData = substr($raw, $currentPosition, $capturedLength);
-//        $block['data'] = $packetData; //todo uncomment
-
-        $paddedLength = ceil($capturedLength / 4) * 4;
-        $currentPosition = $currentPosition + 28 + $paddedLength;
-
-        if ($totalLength - (28 + $paddedLength + 4) >= 8) { //there is some space for Options //8 = minimal Options size
-            $block['options'] = $this->parseOptions($raw, $currentPosition);
-        }
-
-        $lengthEnd = $this->rawToDecimal(substr($raw, $currentPosition, 4));
-        if ($lengthEnd !== $totalLength) {
-            throw new Exception('Unknown format');
-        }
-
-        $currentPosition += 4;
-        print_r($block);
-        return $block;
-    }
-
-    /**
-     * Parse Interface Statistics Block.
-     *
-     * The Interface Statistics Block (ISB) contains the capture statistics for a given interface and it is optional.
-     * The statistics are referred to the interface defined in the current Section identified by the Interface ID field.
-     * An Interface Statistics Block is normally placed at the end of the file, but no assumptions can be taken
-     * about its position - it can even appear multiple times for the same interface.
-     *
-     * @param string $raw Binary string
-     * @param int $currentPosition
-     * @return array
-     * @throws Exception
-     */
-    private function parseInterfaceStatisticsBlock($raw, &$currentPosition) {
-        $block = array(
-            'type' => 'ISB'
-        );
-
-        $blockStart = $this->bin2hexEndian(substr($raw, $currentPosition, 4));
-        if ($blockStart !== self::ISB_TYPE) {
-            throw new Exception('Unknown format of Interface Statistics Block');
-        }
-
-        // Block Total Length
-        $totalLength = $this->rawToDecimal(substr($raw, $currentPosition + 4, 4));
-        $block['length'] = $totalLength;
-
-        $interfaceId = $this->rawToDecimal(substr($raw, $currentPosition + 8, 4));
-        $block['interface_id'] = $interfaceId;
-
-        $timestampHigh = $this->rawToFloat(substr($raw, $currentPosition + 12, 4)); //todo wrong representation
-        $block['timestamp_high'] = $timestampHigh;
-
-        $timestampLow = $this->rawToFloat(substr($raw, $currentPosition + 16, 4)); //todo wrong representation
-        $block['timestamp_low'] = $timestampLow;
-
-        $currentPosition += 20;
-        $block['options'] = $this->parseOptions($raw, $currentPosition);
-
-        $lengthEnd = $this->rawToDecimal(substr($raw, $currentPosition, 4));
-        if ($lengthEnd !== $totalLength) {
-            throw new Exception('Unknown format');
-        }
-
-        $currentPosition += 4;
-        print_r($block);
-        return $block;
-    }
-
-    /**
-     * Parse Options.
-     * @param string $raw Binary string
-     * @param int $currentPosition
-     * @return array
-     */
-    private function parseOptions($raw, &$currentPosition) {
-        $options = array();
-
-        //Option Code
-        while ($optionCode = substr($raw, $currentPosition, 2) !== chr(0) . chr(0)) {
-            //Option Length
-            $optionLength = $this->rawToDecimal(substr($raw, $currentPosition + 2, 2));
-
-            //Option Value
-            $options[] = array(
-                'code' => $this->rawToDecimal($optionCode),
-                'value' => substr($raw, $currentPosition + 4, $optionLength)
-            );
-
-            $currentPosition += 4 + ceil($optionLength / 4) * 4; //4 = Option code + Option length
-        }
-
-        $currentPosition += 4; //closing Option code + closing Option length
-        return $options;
-    }
-
-    /**
      * Convert binary string to hexadecimal.
      * @param string $raw Binary string
      * @return string HEX string
      */
-    private function bin2hexEndian($raw) {
+    public static function bin2hexEndian($raw) {
         if (strlen($raw) < 2) {
             return $raw;
         }
@@ -790,8 +535,8 @@ class PcapngParser {
      * @param string $raw
      * @return number
      */
-    private function rawToDecimal($raw) {
-        $raw = $this->bin2hexEndian($raw);
+    public static function rawToDecimal($raw) {
+        $raw = static::bin2hexEndian($raw);
 
         return hexdec($raw);
     }
@@ -801,7 +546,7 @@ class PcapngParser {
      * @param string $raw
      * @return float
      */
-    public function rawToFloat($raw) {
+    public static function rawToFloat($raw) {
         $data = unpack('f', strrev($raw));
 
         return $data[1];
